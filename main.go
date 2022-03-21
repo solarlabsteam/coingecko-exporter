@@ -2,17 +2,22 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	log "github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	gecko "github.com/superoo7/go-gecko/v3"
 )
 
 var listenAddress = flag.String("listen-address", ":9400", "The address this exporter would listen on")
+var jsonOutput = flag.Bool("json", false, "Output logs as JSON")
+
+var log zerolog.Logger
 
 func RatesHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -33,7 +38,7 @@ func RatesHandler(w http.ResponseWriter, r *http.Request) {
 	var cg = gecko.NewClient(nil)
 	result, err := cg.SimplePrice(strings.Split(currency, ","), []string{baseCurrency})
 	if err != nil {
-		log.Error("Could not get rate for \"", currency, "\", got error: ", err)
+		log.Error().Err(err).Str("currency", currency).Msg("Could not get rate")
 		return
 	}
 
@@ -48,20 +53,29 @@ func RatesHandler(w http.ResponseWriter, r *http.Request) {
 
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)
-	log.Info("GET /metrics/rates/", baseCurrency, "?currency=", currency)
+	log.Info().
+		Str("method", "GET").
+		Str("url", fmt.Sprintf("/metrics/rates/%s?currency=%s", baseCurrency, currency)).
+		Msg("Processed request")
 }
 
 func main() {
 	flag.Parse()
 
+	if *jsonOutput {
+		log = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	} else {
+		log = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	}
+
 	r := mux.NewRouter()
 	r.HandleFunc("/metrics/rates/{base_currency}", RatesHandler)
 	http.Handle("/", r)
 
-	log.Info("Listening on ", *listenAddress)
+	log.Info().Str("address", *listenAddress).Msg("Listening")
 	err := http.ListenAndServe(*listenAddress, nil)
 	if err != nil {
-		log.Fatal("Could not start application at ", *listenAddress, ", got error: ", err)
+		log.Fatal().Err(err).Msg("Could not start application")
 		panic(err)
 	}
 }
